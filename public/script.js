@@ -1,5 +1,7 @@
 'use strict';
-const API_URL = https://cbetaster-backend.onrender.com
+// Define your backend API URL
+const API_URL = "https://tvet-json-db.onrender.com";
+
 // ==========================================================================
 //   DATA STORE & CONFIGURATION (CBC ALIGNED)
 // ==========================================================================
