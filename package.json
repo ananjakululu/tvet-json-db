@@ -6,10 +6,6 @@
   },
   "dependencies": {
     "json-server": "^0.17.0",
-<<<<<<< HEAD
-    "bcrypt": "^2.4.3"  
-=======
-    "bcrypt": "^2.4.3" 
->>>>>>> origin/main
+    "bcrypt": "^2.4.3"
   }
 }
