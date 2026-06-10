@@ -10,7 +10,7 @@ const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8000;
 const DB_FILE = path.join(__dirname, 'db.json');
 const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_key_change_this'; 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
