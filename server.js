@@ -37,7 +37,6 @@ app.use(helmet({
             styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://cdnjs.cloudflare.com"],
             fontSrc: ["'self'", "https://fonts.gstatic.com", "https://cdnjs.cloudflare.com"],
             imgSrc: ["'self'", "data:", "https://*", "http://*"],
-            // Adjusted connectSrc for local API usage
             connectSrc: ["'self'", "https://api.openai.com"] 
         },
     },
@@ -53,22 +52,18 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // --- CBC Default Data Structure ---
 const DEFAULT_LEARNING_AREAS = [
-    // Pre-Primary
     { id: 'pp_lang', name: 'Language Activities', code: 'PP-LA', applicableLevels: ['PP1', 'PP2'], units: [] },
     { id: 'pp_math', name: 'Mathematics Activities', code: 'PP-MA', applicableLevels: ['PP1', 'PP2'], units: [] },
     { id: 'pp_creative', name: 'Creative Activities', code: 'PP-CA', applicableLevels: ['PP1', 'PP2'], units: [] },
     { id: 'pp_env', name: 'Environmental Activities', code: 'PP-EA', applicableLevels: ['PP1', 'PP2'], units: [] },
-    // Lower Primary
     { id: 'lp_lit', name: 'Literacy Activities', code: 'LP-LIT', applicableLevels: ['Grade 1', 'Grade 2', 'Grade 3'], units: [] },
     { id: 'lp_math', name: 'Mathematics', code: 'LP-MATH', applicableLevels: ['Grade 1', 'Grade 2', 'Grade 3'], units: [] },
     { id: 'lp_env', name: 'Environmental Activities', code: 'LP-EA', applicableLevels: ['Grade 1', 'Grade 2', 'Grade 3'], units: [] },
-    // Middle School
     { id: 'ms_eng', name: 'English', code: 'MS-ENG', applicableLevels: ['Grade 4', 'Grade 5', 'Grade 6'], units: [] },
     { id: 'ms_kis', name: 'Kiswahili', code: 'MS-KIS', applicableLevels: ['Grade 4', 'Grade 5', 'Grade 6'], units: [] },
     { id: 'ms_math', name: 'Mathematics', code: 'MS-MATH', applicableLevels: ['Grade 4', 'Grade 5', 'Grade 6'], units: [] },
     { id: 'ms_sci', name: 'Science & Technology', code: 'MS-SCI', applicableLevels: ['Grade 4', 'Grade 5', 'Grade 6'], units: [] },
     { id: 'ms_ss', name: 'Social Studies', code: 'MS-SS', applicableLevels: ['Grade 4', 'Grade 5', 'Grade 6'], units: [] },
-    // Junior Secondary
     { id: 'js_eng', name: 'English', code: 'JS-ENG', applicableLevels: ['Grade 7', 'Grade 8', 'Grade 9'], units: [] },
     { id: 'js_kis', name: 'Kiswahili', code: 'JS-KIS', applicableLevels: ['Grade 7', 'Grade 8', 'Grade 9'], units: [] },
     { id: 'js_math', name: 'Mathematics', code: 'JS-MATH', applicableLevels: ['Grade 7', 'Grade 8', 'Grade 9'], units: [] },
@@ -152,34 +147,27 @@ const requireRole = (...allowedRoles) => {
     };
 };
 
-// --- ROUTES ---
+// ==========================================================================
+//   PAGE ROUTES
+// ==========================================================================
 
-// 1. Root Route: Serve Landing Page
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'public', 'login.html')));
+app.get('/dashboard', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 
-// 2. Login Page
-app.get('/login', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'login.html'));
-});
+// ==========================================================================
+//   AUTHENTICATION ROUTES
+// ==========================================================================
 
-// 3. Dashboard
-app.get('/dashboard', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
-});
-
-// API: Login
 app.post('/api/login', loginLimiter, async (req, res) => {
     try {
         const { email, password } = req.body;
         const db = await loadDB();
         const user = db.users.find(u => u.email === email);
 
-        if (!user) return res.status(401).json({ success: false, message: 'Invalid credentials' });
-
-        const validPassword = await bcrypt.compare(password, user.passwordHash);
-        if (!validPassword) return res.status(401).json({ success: false, message: 'Invalid credentials' });
+        if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+            return res.status(401).json({ success: false, message: 'Invalid credentials' });
+        }
 
         const token = jwt.sign(
             { id: user.id, email: user.email, role: user.role, name: user.name }, 
@@ -198,7 +186,6 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     }
 });
 
-// API: Signup
 app.post('/api/signup', async (req, res) => {
     try {
         const { name, email, password } = req.body;
@@ -224,28 +211,83 @@ app.post('/api/signup', async (req, res) => {
     }
 });
 
-// API: Get Full DB (Sync)
+// ==========================================================================
+//   RESTful RESOURCE ROUTES (Matching script.js expectations)
+//   These mimic json-server behavior: GET reads, POST replaces array
+// ==========================================================================
+
+// --- STUDENTS ---
+app.get('/students', authenticateToken, async (req, res) => {
+    const db = await loadDB();
+    res.json(db.students || []);
+});
+app.post('/students', authenticateToken, async (req, res) => {
+    const db = await loadDB();
+    db.students = req.body; // Script.js sends the whole array
+    await saveDB(db);
+    res.json(db.students);
+});
+
+// --- STAFF ---
+app.get('/staff', authenticateToken, async (req, res) => {
+    const db = await loadDB();
+    res.json(db.staff || []);
+});
+app.post('/staff', authenticateToken, async (req, res) => {
+    const db = await loadDB();
+    db.staff = req.body;
+    await saveDB(db);
+    res.json(db.staff);
+});
+
+// --- EXAMS ---
+app.get('/exams', authenticateToken, async (req, res) => {
+    const db = await loadDB();
+    res.json(db.exams || []);
+});
+app.post('/exams', authenticateToken, async (req, res) => {
+    const db = await loadDB();
+    db.exams = req.body;
+    await saveDB(db);
+    res.json(db.exams);
+});
+
+// --- SETTINGS ---
+app.get('/settings', authenticateToken, async (req, res) => {
+    const db = await loadDB();
+    res.json(db.settings || {});
+});
+app.post('/settings', authenticateToken, requireRole('admin'), async (req, res) => {
+    const db = await loadDB();
+    db.settings = req.body;
+    await saveDB(db);
+    res.json(db.settings);
+});
+
+// --- LEARNING AREAS ---
+app.get('/learningAreas', authenticateToken, async (req, res) => {
+    const db = await loadDB();
+    res.json(db.learningAreas || []);
+});
+app.post('/learningAreas', authenticateToken, async (req, res) => {
+    const db = await loadDB();
+    db.learningAreas = req.body;
+    await saveDB(db);
+    res.json(db.learningAreas);
+});
+
+// ==========================================================================
+//   LEGACY / BACKUP ROUTES
+// ==========================================================================
+
+// API: Get Full DB (Legacy - for reference if needed)
 app.get('/api/db', authenticateToken, async (req, res) => {
     try {
         const db = await loadDB();
-        // Strip sensitive data before sending
         const safeDb = { ...db, users: db.users.map(u => ({ id: u.id, email: u.email, role: u.role, name: u.name })) };
         res.json(safeDb);
     } catch (err) {
         res.status(500).json({ error: 'Failed to load database' });
-    }
-});
-
-// API: Save Full DB (Sync)
-app.post('/api/db', authenticateToken, requireRole('admin'), async (req, res) => {
-    try {
-        const currentDb = await loadDB();
-        // Prevent overwriting user passwords with potentially unsafe data from frontend
-        const dataToSave = { ...req.body, users: currentDb.users }; 
-        await saveDB(dataToSave);
-        res.json({ success: true, message: 'Database saved' });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to save database' });
     }
 });
 
@@ -268,7 +310,6 @@ app.post('/api/ai/chat', authenticateToken, async (req, res) => {
         });
         
         if (!response.ok) throw new Error('AI API Error');
-        
         const data = await response.json();
         res.json({ reply: data.choices[0].message.content });
     } catch (error) {
@@ -276,7 +317,6 @@ app.post('/api/ai/chat', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to process AI request' });
     }
 });
-
 
 // --- Start Server ---
 app.listen(PORT, () => {
