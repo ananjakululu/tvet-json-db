@@ -16,7 +16,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your_super_secret_key_change_this'
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 // 2. Initialize Database (Creates 'school.db' file)
-const db = new Database('school.db');
+// Check if running on Render (Linux) or Local
+const dbPath = process.env.RENDER ? '/opt/render/project/data/school.db' : 'school.db';
+const db = new Database(dbPath);
 
 // 3. Create Tables (Schema)
 db.exec(`
