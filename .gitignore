@@ -1,3 +1,23 @@
+# Dependencies
 node_modules
+
+# Environment Variables
 .env
+
+# Database
 school.db
+*.db
+*.sqlite
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Optional: Build
+dist
+build
