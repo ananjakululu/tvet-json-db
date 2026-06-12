@@ -6,24 +6,27 @@
 
 document.addEventListener('DOMContentLoaded', () => {
     // 1. SECURITY CHECK
-    // If user is already logged in, send them to the dashboard
     const token = localStorage.getItem('authToken');
     if (token) {
+        // Verify token exists before redirecting
         window.location.href = 'dashboard.html';
     }
 
     // 2. THEME INITIALIZATION
     const savedTheme = localStorage.getItem('theme') || 'light';
     document.documentElement.setAttribute('data-theme', savedTheme);
-    const themeIcon = document.querySelector('#themeToggle i');
-    if (themeIcon) themeIcon.className = savedTheme === 'dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+    const themeToggle = document.getElementById('themeToggle');
+    if (themeToggle) {
+        const icon = themeToggle.querySelector('i');
+        if (icon) icon.className = savedTheme === 'dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+    }
 
-    document.getElementById('themeToggle')?.addEventListener('click', () => {
+    themeToggle?.addEventListener('click', () => {
         const current = document.documentElement.getAttribute('data-theme');
         const next = current === 'light' ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', next);
         localStorage.setItem('theme', next);
-        const icon = document.querySelector('#themeToggle i');
+        const icon = themeToggle.querySelector('i');
         if (icon) icon.className = next === 'dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
     });
 });
@@ -86,7 +89,7 @@ function showToast(msg, type = 'success') {
 }
 
 // ==========================================================================
-//   AUTHENTICATION LOGIC (SECURE BCRYPT VERSION)
+//   AUTHENTICATION LOGIC (CONNECTED TO SERVER)
 // ==========================================================================
 
 // 1. LOGIN FORM HANDLER
@@ -103,30 +106,19 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
     const password = document.getElementById('loginPass').value;
 
     try {
-        const res = await fetch('/users');
-        if (!res.ok) throw new Error('Failed to connect to server');
-        
-        const users = await res.json();
-        
-        // Loop through users to find matching email, then verify hash
-        let foundUser = null;
-        for (const user of users) {
-            if (user.email === email) {
-                // Verify the password against the hash
-                const isMatch = await bcrypt.compare(password, user.passwordHash);
-                if (isMatch) {
-                    foundUser = user;
-                    break;
-                }
-            }
-        }
+        // CONNECT TO SERVER API
+        const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
 
-        if (foundUser) {
-            // SUCCESS
-            const fakeToken = 'jwt-token-' + Date.now();
-            
-            localStorage.setItem('authToken', fakeToken);
-            localStorage.setItem('user', JSON.stringify(foundUser));
+        const data = await res.json();
+
+        if (data.success) {
+            // SUCCESS: Server returned a real token
+            localStorage.setItem('authToken', data.token);
+            localStorage.setItem('user', JSON.stringify(data.user));
             
             showToast('Login Successful! Redirecting...', 'success');
             
@@ -134,14 +126,14 @@ document.getElementById('loginForm')?.addEventListener('submit', async (e) => {
                 window.location.href = 'dashboard.html'; 
             }, 1000);
         } else {
-            // FAILURE
-            showToast('Invalid email or password.', 'error');
+            // FAILURE: Server said invalid credentials
+            showToast(data.message || 'Invalid email or password.', 'error');
             btn.innerHTML = originalText;
             btn.disabled = false;
         }
     } catch (err) {
         console.error(err);
-        showToast('Connection error. Is db.json running?', 'error');
+        showToast('Connection error. Is the server running on port 8000?', 'error');
         btn.innerHTML = originalText;
         btn.disabled = false;
     }
@@ -162,41 +154,21 @@ document.getElementById('signupForm')?.addEventListener('submit', async (e) => {
     const password = document.getElementById('signupPass').value;
 
     try {
-        // STEP 1: Check if user already exists
-        const checkRes = await fetch('/users');
-        const existingUsers = await checkRes.json();
-        const emailExists = existingUsers.some(u => u.email === email);
-
-        if (emailExists) {
-            showToast('This email is already registered.', 'error');
-            btn.innerHTML = originalText;
-            btn.disabled = false;
-            return;
-        }
-
-        // STEP 2: HASH THE PASSWORD (Security)
-        const passwordHash = await bcrypt.hash(password, 10);
-
-        // STEP 3: Create the new user via POST to '/users'
-        // We send 'passwordHash' to the DB, not 'password'
-        const res = await fetch('/users', { 
+        // CONNECT TO SERVER API
+        const res = await fetch('/api/signup', { 
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                name, 
-                email, 
-                passwordHash, // <-- Storing the hash
-                role: 'teacher',
-                createdAt: new Date().toISOString()
-            })
+            body: JSON.stringify({ name, email, password })
         });
 
-        if (res.ok) {
+        const data = await res.json();
+
+        if (data.success) {
             showToast('Account created! Please log in.', 'success');
             e.target.reset();
             switchMode('login'); 
         } else {
-            showToast('Failed to create account.', 'error');
+            showToast(data.message || 'Failed to create account.', 'error');
         }
     } catch (err) {
         console.error(err);

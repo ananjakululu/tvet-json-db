@@ -209,81 +209,125 @@ async function loadData() {
     if (!token) return logout();
 
     try {
-        // 1. FETCH SPECIFIC ENDPOINTS (As per your snippet request)
-        const [studentsRes, staffRes, settingsRes, examsRes, learningAreasRes] = await Promise.all([
-            fetch(`${API_URL}/students`),
-            fetch(`${API_URL}/staff`),
-            fetch(`${API_URL}/settings`),
-            fetch(`${API_URL}/exams`),
-            fetch(`${API_URL}/learningAreas`)
-        ]);
-
-        // 2. PARSE DATA
-        const students = await studentsRes.json();
-        const staff = await staffRes.json();
-        const settings = await settingsRes.json();
-        const exams = await examsRes.json();
-        const learningAreas = await learningAreasRes.json();
-
-        // 3. POPULATE THE STORE
-        store.students = students || [];
-        store.staff = staff || [];
-        store.exams = exams || [];
-        store.clearedStudents = []; // Assuming this is local-only or needs another endpoint
-        store.notes = [];
-        store.messages = [];
-        
-        // Merge Settings (Default + Server)
-        store.settings = { ...store.settings, ...settings };
-
-        // Intelligent Subject Merging (Keep your defaults, add new ones from server)
-        let existingAreas = learningAreas || [];
-        DEFAULT_LEARNING_AREAS.forEach(def => {
-            const exists = existingAreas.some(area => area.code === def.code);
-            if (!exists) existingAreas.push(def);
+        // 1. Try to fetch from Server
+        const res = await fetch(`${API_URL}/api/db`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` }
         });
-        store.learningAreas = existingAreas;
 
-        // Refresh UI
+        if (res.ok) {
+            const db = await res.json();
+            // Populate Store from Server
+            store.students = db.students || [];
+            store.staff = db.staff || [];
+            store.exams = db.exams || [];
+            store.settings = { ...store.settings, ...db.settings };
+            
+            let existingAreas = db.learningAreas || [];
+            DEFAULT_LEARNING_AREAS.forEach(def => {
+                if (!existingAreas.some(area => area.code === def.code)) existingAreas.push(def);
+            });
+            store.learningAreas = existingAreas;
+        } else {
+            throw new Error("Server response not OK");
+        }
+
         renderDashboard(); 
         renderStaff();
 
     } catch (err) {
         console.error("Failed to load data from server.", err);
-        showToast('Error connecting to server. Check internet.', 'error');
+        
+        // 2. FALLBACK: Load from LocalStorage (The Safety Net)
+        const localData = localStorage.getItem('elimutrack_backup');
+        if (localData) {
+            const parsed = JSON.parse(localData);
+            Object.assign(store, parsed);
+            renderDashboard();
+            renderStaff();
+            alert("Warning: Could not connect to server. Loaded previously saved data from browser.");
+        } else {
+            alert("Critical Error: No data found on Server or Browser.");
+        }
     }
 }
 async function saveData() {
     const token = localStorage.getItem('authToken');
-    if (!token) return;
+    if (!token) {
+        showToast('Session expired. Please login again.', 'error');
+        return window.location.href = 'login.html';
+    }
+
+    // 1. LocalStorage Backup (Stripped of images to prevent crash)
+    try {
+        const lightweightStore = {
+            ...store,
+            // Remove heavy photos from backup
+            students: store.students.map(s => ({ ...s, photo: null })),
+            staff: store.staff.map(s => ({ ...s, photo: null })),
+            settings: {
+                ...store.settings,
+                logo: null,
+                stamp: null,
+                hoiSignature: null,
+                ctSignature: null
+            }
+        };
+        localStorage.setItem('elimutrack_backup', JSON.stringify(lightweightStore));
+    } catch (e) {
+        console.warn("Local Storage full. Backup skipped.");
+    }
 
     try {
-        // Optional: Remove heavy image data if the API has payload size limits
-        // const dataToSend = { ...store }; 
-        // dataToSend.settings.logo = null; // If you want to skip logo to save space
+        // 2. Send to Server (With Auth Headers)
+        const [studentsRes, staffRes, settingsRes, examsRes, areasRes] = await Promise.all([
+            fetch(`${API_URL}/students`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}` // <--- CRITICAL FIX
+                },
+                body: JSON.stringify(store.students)
+            }),
+            fetch(`${API_URL}/staff`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}` // <--- CRITICAL FIX
+                },
+                body: JSON.stringify(store.staff)
+            }),
+            fetch(`${API_URL}/settings`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}` // <--- CRITICAL FIX
+                },
+                body: JSON.stringify(store.settings)
+            }),
+            fetch(`${API_URL}/exams`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify(store.exams)
+            }),
+            fetch(`${API_URL}/learningAreas`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify(store.learningAreas)
+            })
+        ]);
 
-        const res = await fetch(API_URL, {
-            method: 'POST', // Change to 'PUT' if your backend expects a full replacement
-            mode: 'cors',
-            headers: { 
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}` 
-            },
-            body: JSON.stringify(store)
-        });
-
-        if (!res.ok) {
-            throw new Error(`Failed to save: ${res.status}`);
+        if (studentsRes.ok && staffRes.ok && settingsRes.ok) {
+            showToast('All changes saved successfully!');
+        } else {
+            throw new Error('Server rejected one or more saves');
         }
-        
-        // Optional: Visual feedback that save happened
-        // console.log('Data saved successfully');
+
     } catch (err) {
-        console.error("Failed to save data to server", err);
-        showToast('Failed to save changes to server.', 'error');
+        console.error("Sync failed", err);
+        showToast('Failed to save to server. Check Console.', 'error');
     }
 }
-
 function applyRoleRestrictions(role) {
     if (role === 'teacher') {
         document.body.classList.add('role-teacher');
@@ -790,7 +834,7 @@ function renderStudentGrid(data, container) {
     }
     
     container.innerHTML = paginatedData.map(s => {
-        return `<div class="student-card"><div class="card-header"><div class="avatar-wrapper"><img src="${s.photo}" alt="${escapeHtml(s.name)}" onerror="this.src='${DEFAULT_AVATAR}'"></div><div class="info"><div class="name">${escapeHtml(s.name)}</div><div class="meta">${s.reg} &bull; ${s.grade}</div></div></div><div class="card-body"><div class="detail-item"><label>Stream</label><span>${s.stream}</span></div><div class="detail-item"><label>Phone</label><span>${s.phone}</span></div></div><div class="card-footer"><button class="action-btn" data-action="view" data-id="${s.id}" title="View Profile"><i class="fa-solid fa-eye"></i></button><button class="action-btn" data-action="edit" data-id="${s.id}" title="Edit"><i class="fa-solid fa-edit"></i></button><button class="action-btn danger" data-action="delete" data-type="student" data-id="${s.id}" title="Delete Learner" style="color:var(--danger); margin-left:auto;"><i class="fa-solid fa-trash"></i></button></div></div>`;
+        return `<div class="student-card"><div class="card-header"><div class="avatar-wrapper"><img src="${s.photo || DEFAULT_AVATAR}" alt="${escapeHtml(s.name)}" onerror="this.src='${DEFAULT_AVATAR}'"></div><div class="info"><div class="name">${escapeHtml(s.name)}</div><div class="meta">${s.reg} &bull; ${s.grade}</div></div></div><div class="card-body"><div class="detail-item"><label>Stream</label><span>${s.stream}</span></div><div class="detail-item"><label>Phone</label><span>${s.phone}</span></div></div><div class="card-footer"><button class="action-btn" data-action="view" data-id="${s.id}" title="View Profile"><i class="fa-solid fa-eye"></i></button><button class="action-btn" data-action="edit" data-id="${s.id}" title="Edit"><i class="fa-solid fa-edit"></i></button><button class="action-btn danger" data-action="delete" data-type="student" data-id="${s.id}" title="Delete Learner" style="color:var(--danger); margin-left:auto;"><i class="fa-solid fa-trash"></i></button></div></div>`;
     }).join('');
 }
 
@@ -1078,12 +1122,18 @@ function executeUpdateAssessment(payload) {
 //   STAFF SECTION
 // ==========================================================================
 function initStaffSection() { 
-    // Ensure we respect the current view setting on init
+    // 1. CLEAR FILTERS: Prevent "Sticky Search" issues where the browser remembers text
+    if ($('staffSearch')) $('staffSearch').value = '';
+    if ($('staffDeptFilter')) $('staffDeptFilter').value = 'all';
+
+    // 2. RESTORE VIEW STATE: Ensure the correct Grid/List button is active
     const activeBtn = document.querySelector(`.btn-group .btn[data-section="staff"][data-view="${currentView.staff}"]`);
     if(activeBtn) {
         document.querySelectorAll('.btn-group .btn[data-section="staff"]').forEach(b => b.classList.remove('active'));
         activeBtn.classList.add('active');
     }
+    
+    // 3. RENDER: Load the data
     renderStaff(); 
 }
 

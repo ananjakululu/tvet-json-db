@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Environment Variables (Secrets)
+.env
+
+# Databases (CRITICAL - Do not upload these)
+school.db
+db.json
+
+# OS Files
+.DS_Store
+Thumbs.db
