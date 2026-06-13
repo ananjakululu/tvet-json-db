@@ -349,12 +349,36 @@ app.get('/exams', authenticateToken, (req, res) => {
 });
 
 app.post('/exams', authenticateToken, (req, res) => {
-    const insert = db.prepare(`INSERT INTO exams (id, studentId, subjectId, score, term, year, comments) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    // 1. Define columns explicitly
+    const examColumns = ['id', 'studentId', 'subjectId', 'score', 'term', 'year', 'comments'];
+
+    // 2. Map data explicitly to ensure order and exclude extra fields
+    const mapExamData = (dataArray) => {
+        return dataArray.map(item => examColumns.map(col => item[col]));
+    };
+
+    // 3. Create prepared statement
+    const insert = db.prepare(`
+        INSERT INTO exams (${examColumns.join(', ')}) 
+        VALUES (${examColumns.map(() => '?').join(', ')})
+    `);
+
     try {
-        bulkReplace('exams', req.body, insert);
+        const deleteMany = db.prepare(`DELETE FROM exams`);
+        
+        const insertMany = db.transaction((items) => {
+            deleteMany.run();
+            const rowsToInsert = mapExamData(items);
+            for (const row of rowsToInsert) {
+                insert.run(...row);
+            }
+        });
+        
+        insertMany(req.body);
         res.json(req.body);
     } catch (err) {
-        res.status(500).json({ error: 'DB Error' });
+        console.error("Exams Save Error:", err);
+        res.status(500).json({ error: 'DB Error', details: err.message });
     }
 });
 
@@ -368,9 +392,11 @@ app.get('/settings', authenticateToken, (req, res) => {
 app.post('/settings', authenticateToken, requireRole('admin'), (req, res) => {
     const data = req.body;
     data.id = 1;
+    
+    // FIX: Added the missing two placeholders '?' at the end (for stamp and ctSignature)
     const upsert = db.prepare(`
         INSERT INTO settings (id, schoolName, motto, email, phone, schoolCode, academicYear, currentTerm, level, category, address, hoiName, hoiTitle, hoiTsc, hoiPhone, hoiEmail, logo, stamp, hoiSignature, ctSignature) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             schoolName=excluded.schoolName, motto=excluded.motto, email=excluded.email, phone=excluded.phone,
             schoolCode=excluded.schoolCode, academicYear=excluded.academicYear, currentTerm=excluded.currentTerm,
@@ -381,7 +407,13 @@ app.post('/settings', authenticateToken, requireRole('admin'), (req, res) => {
     `);
 
     try {
-        upsert.run(data.id, data.schoolName, data.motto, data.email, data.phone, data.schoolCode, data.academicYear, data.currentTerm, data.level, data.category, data.address, data.hoiName, data.hoiTitle, data.hoiTsc, data.hoiPhone, data.hoiEmail, data.logo, data.stamp, data.hoiSignature, data.ctSignature);
+        // Ensure the arguments passed here match the new order
+        upsert.run(
+            data.id, data.schoolName, data.motto, data.email, data.phone, data.schoolCode, 
+            data.academicYear, data.currentTerm, data.level, data.category, data.address, 
+            data.hoiName, data.hoiTitle, data.hoiTsc, data.hoiPhone, data.hoiEmail, 
+            data.logo, data.stamp, data.hoiSignature, data.ctSignature
+        );
         res.json(data);
     } catch (err) {
         console.error(err);
@@ -397,14 +429,39 @@ app.get('/learningAreas', authenticateToken, (req, res) => {
 });
 
 app.post('/learningAreas', authenticateToken, (req, res) => {
-    const insert = db.prepare(`INSERT INTO learningAreas (id, name, code, applicableLevels) VALUES (?, ?, ?, ?)`);
+    // 1. Define columns explicitly
+    const laColumns = ['id', 'name', 'code', 'applicableLevels'];
+
+    // 2. Map data explicitly (and handle JSON stringification here)
+    const mapLAData = (dataArray) => {
+        return dataArray.map(item => {
+            // Ensure we stringify the array for storage, others remain as is
+            return laColumns.map(col => col === 'applicableLevels' ? JSON.stringify(item[col]) : item[col]);
+        });
+    };
+
+    // 3. Create prepared statement
+    const insert = db.prepare(`
+        INSERT INTO learningAreas (${laColumns.join(', ')}) 
+        VALUES (${laColumns.map(() => '?').join(', ')})
+    `);
+
     try {
-        // Convert Array back to String for storage
-        const dataToStore = req.body.map(item => ({ ...item, applicableLevels: JSON.stringify(item.applicableLevels) }));
-        bulkReplace('learningAreas', dataToStore, insert);
-        res.json(dataToStore);
+        const deleteMany = db.prepare(`DELETE FROM learningAreas`);
+        
+        const insertMany = db.transaction((items) => {
+            deleteMany.run();
+            const rowsToInsert = mapLAData(items);
+            for (const row of rowsToInsert) {
+                insert.run(...row);
+            }
+        });
+        
+        insertMany(req.body);
+        res.json(req.body);
     } catch (err) {
-        res.status(500).json({ error: 'DB Error' });
+        console.error("Learning Areas Save Error:", err);
+        res.status(500).json({ error: 'DB Error', details: err.message });
     }
 });
 
@@ -429,6 +486,69 @@ app.get('/api/db', authenticateToken, (req, res) => {
     }
 });
 
+// --- RESTORE / IMPORT ROUTE ---
+app.post('/api/restore', authenticateToken, requireRole('admin'), (req, res) => {
+    try {
+        const { students, staff, exams, settings, learningAreas } = req.body;
+
+        // Helper to safely run bulkReplace
+        const safeReplace = (table, data, columns) => {
+            if (!data || !Array.isArray(data)) return;
+            const insert = db.prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`);
+            
+            // Map data strictly to columns to prevent errors
+            const mappedData = data.map(item => columns.map(col => item[col]));
+            
+            const transaction = db.transaction((items) => {
+                db.prepare(`DELETE FROM ${table}`).run();
+                for (const row of items) {
+                    insert.run(...row);
+                }
+            });
+            transaction(mappedData);
+        };
+
+        // 1. Restore Learning Areas (Independent)
+        if (learningAreas) {
+            const laCols = ['id', 'name', 'code', 'applicableLevels'];
+            const mappedLA = learningAreas.map(item => ({
+                ...item,
+                applicableLevels: typeof item.applicableLevels === 'string' ? item.applicableLevels : JSON.stringify(item.applicableLevels)
+            }));
+            safeReplace('learningAreas', mappedLA, laCols);
+        }
+
+        // 2. Restore Settings (Single Object expected in backup, convert to Array)
+        if (settings) {
+            const insert = db.prepare(`INSERT INTO settings (id, schoolName, motto, email, phone, schoolCode, academicYear, currentTerm, level, category, address, hoiName, hoiTitle, hoiTsc, hoiPhone, hoiEmail, logo, stamp, hoiSignature, ctSignature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+            const settingsCols = ['id', 'schoolName', 'motto', 'email', 'phone', 'schoolCode', 'academicYear', 'currentTerm', 'level', 'category', 'address', 'hoiName', 'hoiTitle', 'hoiTsc', 'hoiPhone', 'hoiEmail', 'logo', 'stamp', 'hoiSignature', 'ctSignature'];
+            // Ensure ID is 1
+            const s = { ...settings, id: 1 }; 
+            const row = settingsCols.map(col => s[col]);
+            
+            db.prepare(`DELETE FROM settings`).run();
+            insert.run(...row);
+        }
+
+        // 3. Restore Students
+        const studentCols = ['id', 'name', 'gender', 'dob', 'idNumber', 'phone', 'grade', 'stream', 'reg', 'photo', 'guardianName', 'guardianPhone', 'guardianRel', 'upiNumber', 'prevSchool', 'entryLevel', 'yearCompleted', 'nemisNumber', 'disability'];
+        safeReplace('students', students, studentCols);
+
+        // 4. Restore Staff
+        const staffCols = ['id', 'name', 'email', 'role', 'department', 'phone', 'tscNumber', 'photo', 'subjects'];
+        safeReplace('staff', staff, staffCols);
+
+        // 5. Restore Exams (Do this last as it depends on students)
+        const examCols = ['id', 'studentId', 'subjectId', 'score', 'term', 'year', 'comments'];
+        safeReplace('exams', exams, examCols);
+
+        res.json({ success: true, message: 'Database restored successfully!' });
+
+    } catch (err) {
+        console.error("Restore Error:", err);
+        res.status(500).json({ error: 'Restore failed', details: err.message });
+    }
+});
 app.post('/api/ai/chat', authenticateToken, async (req, res) => {
     const { query, context } = req.body;
     if (!OPENAI_API_KEY) return res.status(500).json({ error: 'AI Service Unconfigured' });
