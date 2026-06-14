@@ -20,6 +20,39 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const dbPath = process.env.RENDER ? '/opt/render/project/data/school.db' : 'school.db';
 const db = new Database(dbPath);
 
+// ==========================================================================
+//   DATABASE MIGRATION (RUNS ON STARTUP)
+// ==========================================================================
+console.log('[DB] Checking for schema updates...');
+try {
+    // Add 'department' column
+    db.exec(`ALTER TABLE users ADD COLUMN department TEXT DEFAULT 'General';`);
+    console.log('[DB] Migration: Added column `department` to users.');
+} catch (err) {
+    // Column likely already exists, ignore error
+}
+
+try {
+    // Add 'isActive' column
+    db.exec(`ALTER TABLE users ADD COLUMN isActive INTEGER DEFAULT 1;`);
+    console.log('[DB] Migration: Added column `isActive` to users.');
+} catch (err) {
+    // Column likely already exists, ignore error
+}
+
+// Create 'auditLogs' table
+db.exec(`
+    CREATE TABLE IF NOT EXISTS auditLogs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        userId TEXT,
+        userName TEXT,
+        action TEXT,
+        details TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+`);
+console.log('[DB] Migration: Checked table `auditLogs`.');
+
 // 3. Create Tables (Schema)
 db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -132,8 +165,8 @@ const seedDatabase = () => {
     const admin = db.prepare('SELECT * FROM users WHERE email = ?').get('admin@school.com');
     if (!admin) {
         const hashedPass = bcrypt.hashSync('admin123', 10);
-        const insert = db.prepare('INSERT INTO users (id, email, name, role, passwordHash) VALUES (?, ?, ?, ?, ?)');
-        insert.run('u1', 'admin@school.com', 'System Admin', 'admin', hashedPass);
+        const insert = db.prepare('INSERT INTO users (id, email, name, role, department, passwordHash) VALUES (?, ?, ?, ?, ?, ?)');
+        insert.run('u1', 'admin@school.com', 'System Admin', 'admin', 'Administration', hashedPass);
         console.log('[DB] Default Admin created (admin@school.com / admin123).');
     }
 
@@ -141,8 +174,8 @@ const seedDatabase = () => {
     const hoi = db.prepare('SELECT * FROM users WHERE email = ?').get('hoi@school.com');
     if (!hoi) {
         const hashedPass = bcrypt.hashSync('hoi123', 10);
-        const insert = db.prepare('INSERT INTO users (id, email, name, role, passwordHash) VALUES (?, ?, ?, ?, ?)');
-        insert.run('u2', 'hoi@school.com', 'Head Teacher', 'hoi', hashedPass);
+        const insert = db.prepare('INSERT INTO users (id, email, name, role, department, passwordHash) VALUES (?, ?, ?, ?, ?, ?)');
+        insert.run('u2', 'hoi@school.com', 'Head Teacher', 'hoi', 'Administration', hashedPass);
         console.log('[DB] Default HOI created (hoi@school.com / hoi123).');
     }
 
@@ -150,8 +183,8 @@ const seedDatabase = () => {
     const examOfficer = db.prepare('SELECT * FROM users WHERE email = ?').get('exam@school.com');
     if (!examOfficer) {
         const hashedPass = bcrypt.hashSync('exam123', 10);
-        const insert = db.prepare('INSERT INTO users (id, email, name, role, passwordHash) VALUES (?, ?, ?, ?, ?)');
-        insert.run('u3', 'exam@school.com', 'Exam Officer', 'exam_officer', hashedPass);
+        const insert = db.prepare('INSERT INTO users (id, email, name, role, department, passwordHash) VALUES (?, ?, ?, ?, ?, ?)');
+        insert.run('u3', 'exam@school.com', 'Exam Officer', 'exam_officer', 'Exams', hashedPass);
         console.log('[DB] Default Exam Officer created (exam@school.com / exam123).');
     }
 
@@ -192,14 +225,36 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// --- AUTH MIDDLEWARE ---
+// ==========================================================================
+//   AUTH MIDDLEWARE & HELPERS
+// ==========================================================================
+
+// Helper to log actions
+const logAction = (userId, userName, action, details) => {
+    try {
+        const stmt = db.prepare('INSERT INTO auditLogs (userId, userName, action, details) VALUES (?, ?, ?, ?)');
+        stmt.run(userId, userName, action, details);
+    } catch (e) { console.error("Logging failed", e); }
+};
+
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Access denied.' });
+    
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) return res.status(403).json({ error: 'Invalid token.' });
-        req.user = user;
+        
+        // ROBUST CHECK: Fetch fresh user data from DB to check isActive
+        const dbUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+        if (!dbUser) return res.status(403).json({ error: 'User not found.' });
+        
+        // Check if account is active
+        if (dbUser.isActive !== 1) {
+            return res.status(403).json({ error: 'Account suspended. Contact Admin.' });
+        }
+
+        req.user = dbUser; // Attach fresh user data
         next();
     });
 };
@@ -222,8 +277,17 @@ app.post('/api/login', loginLimiter, (req, res) => {
         if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
             return res.status(401).json({ success: false, message: 'Invalid credentials' });
         }
-        const token = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: '8h' });
-        res.json({ success: true, token, user: { id: user.id, email: user.email, role: user.role, name: user.name } });
+        
+        if (user.isActive !== 1) {
+            return res.status(403).json({ success: false, message: 'Account suspended. Contact Admin.' });
+        }
+
+        const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '8h' });
+        
+        // Log Login
+        logAction(user.id, user.name, 'LOGIN', `Logged in from ${req.ip}`);
+        
+        res.json({ success: true, token, user: { id: user.id, email: user.email, role: user.role, name: user.name, department: user.department } });
     } catch (err) {
         res.status(500).json({ error: 'Login failed' });
     }
@@ -235,8 +299,9 @@ app.post('/api/signup', (req, res) => {
         const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
         if (existing) return res.status(400).json({ success: false, message: 'User already exists.' });
         const hashedPassword = bcrypt.hashSync(password, 10);
-        const insert = db.prepare('INSERT INTO users (id, email, name, role, passwordHash) VALUES (?, ?, ?, ?, ?)');
-        insert.run(Date.now().toString(), email, name, 'teacher', hashedPassword);
+        // Default signup is 'General' department
+        const insert = db.prepare('INSERT INTO users (id, email, name, role, department, passwordHash) VALUES (?, ?, ?, ?, ?, ?)');
+        insert.run(Date.now().toString(), email, name, 'teacher', 'General', hashedPassword);
         res.status(201).json({ success: true, message: 'Account created!' });
     } catch (err) {
         res.status(500).json({ error: 'Signup failed' });
@@ -268,6 +333,8 @@ app.post('/students', authenticateToken, requireRole('hoi', 'admin'), (req, res)
             }
         });
         insertMany(req.body);
+        
+        logAction(req.user.id, req.user.name, 'UPDATE_STUDENTS', `Updated ${req.body.length} student records.`);
         res.json(req.body);
     } catch (err) {
         console.error("Student Save Error:", err);
@@ -296,6 +363,8 @@ app.post('/staff', authenticateToken, requireRole('hoi', 'admin'), (req, res) =>
             }
         });
         insertMany(req.body);
+        
+        logAction(req.user.id, req.user.name, 'UPDATE_STAFF', `Updated ${req.body.length} staff records.`);
         res.json(req.body);
     } catch (err) {
         console.error("Staff Save Error:", err);
@@ -324,6 +393,8 @@ app.post('/exams', authenticateToken, requireRole('exam_officer', 'hoi', 'admin'
             }
         });
         insertMany(req.body);
+        
+        logAction(req.user.id, req.user.name, 'UPDATE_EXAMS', `Updated ${req.body.length} exam records.`);
         res.json(req.body);
     } catch (err) {
         console.error("Exams Save Error:", err);
@@ -360,6 +431,7 @@ app.post('/settings', authenticateToken, requireRole('admin'), (req, res) => {
             data.hoiName, data.hoiTitle, data.hoiTsc, data.hoiPhone, data.hoiEmail, 
             data.logo, data.stamp, data.hoiSignature, data.ctSignature
         );
+        logAction(req.user.id, req.user.name, 'UPDATE_SETTINGS', 'Updated school settings.');
         res.json(data);
     } catch (err) {
         console.error(err);
@@ -392,6 +464,7 @@ app.post('/learningAreas', authenticateToken, (req, res) => {
             }
         });
         insertMany(req.body);
+        logAction(req.user.id, req.user.name, 'UPDATE_LEARNING_AREAS', 'Updated curriculum.');
         res.json(req.body);
     } catch (err) {
         console.error("Learning Areas Save Error:", err);
@@ -413,6 +486,7 @@ app.get('/api/db', authenticateToken, requireRole('admin', 'hoi'), (req, res) =>
             settings: db.prepare('SELECT * FROM settings WHERE id=1').get() || {},
             learningAreas: db.prepare('SELECT * FROM learningAreas').all().map(a => ({ ...a, applicableLevels: JSON.parse(a.applicableLevels) })),
         };
+        logAction(req.user.id, req.user.name, 'BACKUP_DB', 'Downloaded full database backup.');
         res.json(data);
     } catch (err) {
         res.status(500).json({ error: 'Failed to generate backup' });
@@ -466,11 +540,50 @@ app.post('/api/restore', authenticateToken, requireRole('admin'), (req, res) => 
 
     try {
         restoreTransaction();
+        logAction(req.user.id, req.user.name, 'RESTORE_DB', 'Restored database from backup.');
         res.json({ success: true, message: 'Database restored successfully!' });
     } catch (err) {
         console.error("Restore Error:", err);
         res.status(500).json({ error: 'Restore failed. No changes were made.', details: err.message });
     }
+});
+
+// ==========================================================================
+//   USER MANAGEMENT ROUTES (Robust Features)
+// ==========================================================================
+
+// DEACTIVATE USER
+app.post('/api/users/:id/deactivate', authenticateToken, requireRole('admin'), (req, res) => {
+    const { id } = req.params;
+    const stmt = db.prepare('UPDATE users SET isActive = 0 WHERE id = ?');
+    const result = stmt.run(id);
+    
+    if (result.changes > 0) {
+        logAction(req.user.id, req.user.name, 'DEACTIVATE_USER', `Deactivated user ID: ${id}`);
+        res.json({ success: true, message: 'User deactivated.' });
+    } else {
+        res.status(404).json({ success: false, message: 'User not found.' });
+    }
+});
+
+// ACTIVATE USER
+app.post('/api/users/:id/activate', authenticateToken, requireRole('admin'), (req, res) => {
+    const { id } = req.params;
+    const stmt = db.prepare('UPDATE users SET isActive = 1 WHERE id = ?');
+    const result = stmt.run(id);
+    
+    if (result.changes > 0) {
+        logAction(req.user.id, req.user.name, 'ACTIVATE_USER', `Activated user ID: ${id}`);
+        res.json({ success: true, message: 'User activated.' });
+    } else {
+        res.status(404).json({ success: false, message: 'User not found.' });
+    }
+});
+
+// VIEW AUDIT LOGS
+app.get('/api/logs', authenticateToken, requireRole('admin'), (req, res) => {
+    const logs = db.prepare('SELECT * FROM auditLogs ORDER BY timestamp DESC LIMIT 50').all();
+    res.json(logs);
 });
 
 // ==========================================================================
@@ -506,11 +619,12 @@ app.get('/api/reset-admin', (req, res) => {
     try {
         console.log("[EMERGENCY] Resetting Admin user...");
         const hashedPass = bcrypt.hashSync('admin123', 10);
+        // We explicitly set department and isActive to handle the new schema
         const stmt = db.prepare(`
-            INSERT OR REPLACE INTO users (id, email, name, role, passwordHash) 
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO users (id, email, name, role, department, isActive, passwordHash) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
-        stmt.run('u1', 'admin@school.com', 'System Admin', 'admin', hashedPass);
+        stmt.run('u1', 'admin@school.com', 'System Admin', 'admin', 'Administration', 1, hashedPass);
         res.json({ 
             success: true, 
             message: 'Admin user has been reset.', 
