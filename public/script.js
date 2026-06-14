@@ -384,6 +384,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         window.location.href = 'login.html';
     }
 });
+// 6. EVENT LISTENERS
+// Listen for clicks on Next/Back buttons inside the staff form
+document.addEventListener('click', function(e) {
+    if (e.target.closest('[data-staff-step]')) {
+        handleStaffStep(e);
+    }
+});
 
 function initializeApp(user) {
     applyRoleRestrictions(user.role);
@@ -565,6 +572,20 @@ function initGlobalListeners() {
     
     $('studentPhotoInput')?.addEventListener('change', e => previewStudentPhoto(e.target));
     $('staffPhotoInput')?.addEventListener('change', e => previewStaffPhoto(e.target));
+
+    // Listen for photo upload
+ $('staffPhotoInput')?.addEventListener('change', function(e) {
+    if (e.target.files && e.target.files[0]) {
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+            $('staffPhotoPreview').src = evt.target.result;
+        }
+        reader.readAsDataURL(e.target.files[0]);
+    }
+});
+
+// Listen for form submit
+ $('staffForm')?.addEventListener('submit', submitStaff);
     
     $('logoInput')?.addEventListener('change', e => previewLogo(e.target));
     $('stampInput')?.addEventListener('change', e => previewStamp(e.target));
@@ -1188,7 +1209,19 @@ function resetStaffForm() {
     openModal('staffModal'); 
 }
 
-function openStaffModal() { resetStaffForm(); openModal('staffModal'); }
+// 3. OPEN MODAL (Reset to Step 1)
+function openStaffModal() {
+    if($('staffEditId')) $('staffEditId').value = "";
+    if($('staffForm')) $('staffForm').reset();
+    if($('staffPhotoPreview')) $('staffPhotoPreview').src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect fill='%23e2e8f0' width='100' height='100'/%3E%3Ctext fill='%2394a3b8' font-family='sans-serif' font-size='30' x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle'%3E%i class='fa-solid fa-user'/%3E%3C/text%3E%3C/svg%3E";
+    
+    // Reset to Step 1
+    document.querySelectorAll('[id^="staff-form-step-"]').forEach(el => el.classList.remove('active'));
+    if($('staff-form-step-1')) $('staff-form-step-1').classList.add('active');
+    
+    openModal('staffModal');
+}
+
 
 function previewStaffPhoto(input) { 
     if (input.files && input.files[0]) { 
@@ -1207,37 +1240,61 @@ function previewStaffPhoto(input) {
     } 
 }
 
+// 5. SUBMIT STAFF
 function submitStaff(e) { 
     e.preventDefault(); 
-    const surname = getVal('staffSurname'); const firstName = getVal('staffFirstName'); const otherNames = getVal('staffOtherNames'); const name = `${surname} ${firstName} ${otherNames}`.trim();
-    const editId = $('staffEditId')?.value; const photoSrc = $('staffPhotoPreview')?.src; const finalPhoto = (photoSrc && !photoSrc.includes('data:image/svg+xml')) ? photoSrc : DEFAULT_AVATAR; 
-    const staffData = { name, surname, firstName, otherNames, gender: getVal('staffGender'), dob: getVal('staffDob'), idNo: getVal('staffIdNo'), phone: getVal('staffPhone'), email: getVal('staffEmail'), designation: getVal('staffDesignation'), dept: getVal('staffDept'), tsc: getVal('staffTsc'), employmentType: getVal('staffEmploymentType'), appointmentDate: getVal('staffAppointmentDate'), subjects: getVal('staffSubjects'), photo: finalPhoto }; 
-    if (editId) { StaffRepo.update(editId, staffData); showToast('Staff Updated Successfully!'); } else { StaffRepo.create(staffData); showToast('Staff Added Successfully!'); } 
-    closeModal('staffModal'); renderStaff(); renderDashboard(); 
+    
+    // Combine names
+    const surname = getVal('staffSurname');
+    const firstName = getVal('staffFirstName');
+    const otherNames = getVal('staffOtherNames');
+    const name = `${surname} ${firstName} ${otherNames}`.trim();
+    
+    const editId = $('staffEditId')?.value; 
+    const photoSrc = $('staffPhotoPreview')?.src;
+    
+    // Determine photo
+    const finalPhoto = (photoSrc && !photoSrc.includes('data:image/svg+xml')) ? photoSrc : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect fill='%23e2e8f0' width='100' height='100'/%3E%3Ctext fill='%2394a3b8' font-family='sans-serif' font-size='30' x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle'%3E%i class='fa-solid fa-user'/%3E%3C/text%3E%3C/svg%3E";
+    
+    const staffData = { 
+        name, surname, firstName, otherNames, 
+        gender: getVal('staffGender'), dob: getVal('staffDob'), idNo: getVal('staffIdNo'), 
+        phone: getVal('staffPhone'), email: getVal('staffEmail'), 
+        designation: getVal('staffDesignation'), dept: getVal('staffDept'), 
+        tsc: getVal('staffTsc'), employmentType: getVal('staffEmploymentType'), 
+        appointmentDate: getVal('staffAppointmentDate'), subjects: getVal('staffSubjects'), 
+        photo: finalPhoto 
+    }; 
+    
+    if (editId) { 
+        StaffRepo.update(editId, staffData); 
+        showToast('Staff Updated Successfully!'); 
+    } else { 
+        StaffRepo.create(staffData); 
+        showToast('Staff Added Successfully!'); 
+    } 
+    
+    closeModal('staffModal'); 
+    renderStaff(); 
+    renderDashboard(); 
 }
 
+
+// 4. EDIT STAFF (Populate both steps)
 function editStaff(id) { 
     const s = StaffRepo.getById(id); 
     if (!s) return; 
     
-    openStaffModal(); 
+    openModal('staffModal');
     
-    $('staffModalTitle').innerText = "Edit Staff Details"; 
-    $('staffEditId').value = id; 
+    // Set Title
+    if($('staffModalTitle')) $('staffModalTitle').innerText = "Edit Staff Details"; 
+    if($('staffEditId')) $('staffEditId').value = id; 
     
-    const preview = $('staffPhotoPreview');
-    if(s.photo) {
-        preview.src = s.photo;
-    } else {
-        preview.src = DEFAULT_AVATAR;
-    }
-    preview.style.width = "150px";
-    preview.style.height = "150px";
-    preview.style.objectFit = "cover";
-    preview.style.borderRadius = "50%";
-    preview.style.display = "block";
-    preview.style.margin = "0 auto";
+    // Photo
+    if(s.photo && $('staffPhotoPreview')) $('staffPhotoPreview').src = s.photo;
     
+    // Step 1 Fields
     setVal('staffSurname', s.surname || s.name.split(' ')[0]); 
     setVal('staffFirstName', s.firstName || s.name.split(' ')[1] || ''); 
     setVal('staffOtherNames', s.otherNames || s.name.split(' ').slice(2).join(' ')); 
@@ -1246,42 +1303,143 @@ function editStaff(id) {
     setVal('staffIdNo', s.idNo); 
     setVal('staffPhone', s.phone); 
     setVal('staffEmail', s.email); 
-    setVal('staffTsc', s.tsc);
+    
+    // Step 2 Fields
     setVal('staffDesignation', s.designation || ''); 
     setVal('staffDept', s.dept || ''); 
+    setVal('staffTsc', s.tsc);
     setVal('staffEmploymentType', s.employmentType); 
     setVal('staffAppointmentDate', s.appointmentDate); 
     setVal('staffSubjects', s.subjects || '');
-}
+} 
 
 function deleteStaff(id) { if (confirm('Are you sure?')) { if (StaffRepo.delete(id)) { renderStaff(); renderDashboard(); showToast('Staff Deleted'); } } }
 
 
-function renderStaff() { 
-    const container = $('staffContainer'); 
+// ==========================================================================
+//   STAFF MANAGEMENT LOGIC (WITH STEPPER SUPPORT)
+// ==========================================================================
+
+// 1. RENDER STAFF (Matches Modal Values)
+function renderStaff() {
+    const container = $('staffContainer');
     if (!container) return;
 
-    const searchTerm = ($('staffSearch')?.value || '').toLowerCase();
-    const deptFilter = $('staffDeptFilter')?.value || 'all';
-    
-    let data = StaffRepo.getAll().filter(s => {
-        const matchSearch = !searchTerm || 
-                            (s.name && s.name.toLowerCase().includes(searchTerm)) || 
-                            (s.tsc && s.tsc.toLowerCase().includes(searchTerm)) ||
-                            (s.phone && s.phone.includes(searchTerm));
-        const matchDept = deptFilter === 'all' || s.dept === deptFilter;
+    const allStaff = StaffRepo.getAll();
+    const searchVal = ($('staffSearch')?.value || '').toLowerCase();
+    const deptSelect = $('staffDeptFilter');
+    const currentDeptFilter = deptSelect ? deptSelect.value : 'all';
+
+    // Update Filter Counts
+    if (deptSelect) {
+        const baseLabels = {
+            'all': 'All Departments',
+            'Administration': 'Administration',
+            'Lower Primary': 'Lower Primary',
+            'Upper Primary': 'Upper Primary',
+            'JSS': 'JSS',
+            'Support': 'Support'
+        };
+
+        const counts = { all: allStaff.length };
+        Array.from(deptSelect.options).forEach(opt => {
+            if (opt.value !== 'all') {
+                counts[opt.value] = allStaff.filter(s => s.dept && s.dept === opt.value).length;
+            }
+        });
+
+        Array.from(deptSelect.options).forEach(opt => {
+            const val = opt.value;
+            const count = counts[val] !== undefined ? counts[val] : 0;
+            const label = baseLabels[val] || val;
+            opt.innerText = `${label} (${count})`;
+        });
+    }
+
+    // Filter Data
+    let filtered = allStaff.filter(staff => {
+        const matchSearch = !searchVal || 
+                            (staff.name && staff.name.toLowerCase().includes(searchVal)) || 
+                            (staff.tsc && staff.tsc.toString().includes(searchVal)) || 
+                            (staff.idNo && staff.idNo.toString().includes(searchVal));
+        
+        const matchDept = currentDeptFilter === 'all' || (staff.dept && staff.dept === currentDeptFilter);
         return matchSearch && matchDept;
     });
 
-    // Check View Mode
-    if (currentView.staff === 'list') {
-        container.style.display = 'block';
-        renderStaffTable(data, container);
-    } else {
-        container.style.display = 'grid';
-        renderStaffGrid(data, container);
+    // Update Stats
+    if ($('statStaffCount')) $('statStaffCount').innerText = allStaff.length;
+    if ($('statTeachersCount')) {
+        const teacherCount = allStaff.filter(s => 
+            (s.designation && s.designation.toLowerCase().includes('teacher')) || 
+            s.role === 'Teacher'
+        ).length;
+        $('statTeachersCount').innerText = teacherCount;
+    }
+
+    // Render
+    if (filtered.length === 0) {
+        container.innerHTML = `<div class="empty-state" style="text-align:center; padding:2rem; color:var(--text-muted);">
+            <i class="fa-solid fa-user-slash" style="font-size:2rem; margin-bottom:1rem;"></i><p>No staff found.</p>
+        </div>`;
+        return;
+    }
+
+    container.innerHTML = '';
+    
+    // GRID RENDER
+    if (currentView.staff === 'grid') {
+        const grid = document.createElement('div');
+        grid.className = 'students-grid-modern';
+        filtered.forEach(s => {
+            const card = document.createElement('div');
+            card.className = 'student-card';
+            card.innerHTML = `
+                <div class="card-header">
+                    <div class="avatar-wrapper">
+                        <img src="${s.photo || DEFAULT_AVATAR}" alt="${s.name}" onerror="this.src='${DEFAULT_AVATAR}'">
+                    </div>
+                    <div class="info">
+                        <div class="name">${escapeHtml(s.name)}</div>
+                        <div class="meta">${s.designation || 'Staff'}</div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="detail-item"><label>Dept</label><span>${s.dept || '-'}</span></div>
+                    <div class="detail-item"><label>TSC</label><span>${s.tsc || '-'}</span></div>
+                </div>
+                <div class="card-footer">
+                    <button class="action-btn" data-action="edit" data-type="staff" data-id="${s.id}"><i class="fa-solid fa-pen"></i></button>
+                    <button class="action-btn danger" data-action="delete" data-type="staff" data-id="${s.id}"><i class="fa-solid fa-trash"></i></button>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+        container.appendChild(grid);
+    } 
+    // LIST RENDER
+    else {
+        const table = document.createElement('div');
+        table.className = 'table-responsive';
+        let html = `<table class="data-table modern-table"><thead><tr><th>Name</th><th>Dept</th><th>Designation</th><th>TSC</th><th>Actions</th></tr></thead><tbody>`;
+        filtered.forEach(s => {
+            html += `<tr>
+                <td><strong>${escapeHtml(s.name)}</strong></td>
+                <td>${s.dept || '-'}</td>
+                <td>${s.designation || '-'}</td>
+                <td>${s.tsc || '-'}</td>
+                <td>
+                    <button class="btn btn-sm" data-action="edit" data-type="staff" data-id="${s.id}"><i class="fa-solid fa-pen"></i></button>
+                    <button class="btn btn-sm" data-action="delete" data-type="staff" data-id="${s.id}"><i class="fa-solid fa-trash"></i></button>
+                </td>
+            </tr>`;
+        });
+        html += `</tbody></table>`;
+        table.innerHTML = html;
+        container.appendChild(table);
     }
 }
+
 function renderStaffTable(data, container) {
     if (data.length === 0) { 
         container.innerHTML = `<div class="empty-state"><i class="fa-solid fa-user-slash"></i><p>No staff found.</p></div>`; 
@@ -3138,6 +3296,21 @@ function handleGlobalSearch(val) {
         router('students'); 
         applyFilters(); 
     } 
+}
+// 2. HANDLE STEPS (Next / Back)
+function handleStaffStep(e) {
+    const btn = e.target.closest('[data-staff-step]');
+    if (!btn) return;
+    
+    const action = btn.dataset.staffStep;
+    const current = parseInt(btn.dataset.current);
+    const nextStep = action === 'next' ? current + 1 : current - 1;
+
+    // Hide all steps
+    document.querySelectorAll('[id^="staff-form-step-"]').forEach(el => el.classList.remove('active'));
+    // Show target step
+    const target = $(`staff-form-step-${nextStep}`);
+    if(target) target.classList.add('active');
 }
 
 function processAndSaveImage(input, key, previewId) {
