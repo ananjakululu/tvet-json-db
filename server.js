@@ -128,13 +128,31 @@ const DEFAULT_LEARNING_AREAS = [
 ];
 
 const seedDatabase = () => {
-    // Seed Admin
+    // 1. Seed Admin
     const admin = db.prepare('SELECT * FROM users WHERE email = ?').get('admin@school.com');
     if (!admin) {
         const hashedPass = bcrypt.hashSync('admin123', 10);
         const insert = db.prepare('INSERT INTO users (id, email, name, role, passwordHash) VALUES (?, ?, ?, ?, ?)');
-        insert.run('u1', 'admin@school.com', 'Admin User', 'admin', hashedPass);
-        console.log('[DB] Default Admin created.');
+        insert.run('u1', 'admin@school.com', 'System Admin', 'admin', hashedPass);
+        console.log('[DB] Default Admin created (admin@school.com / admin123).');
+    }
+
+    // 2. Seed HOI (Head of Institution)
+    const hoi = db.prepare('SELECT * FROM users WHERE email = ?').get('hoi@school.com');
+    if (!hoi) {
+        const hashedPass = bcrypt.hashSync('hoi123', 10);
+        const insert = db.prepare('INSERT INTO users (id, email, name, role, passwordHash) VALUES (?, ?, ?, ?, ?)');
+        insert.run('u2', 'hoi@school.com', 'Head Teacher', 'hoi', hashedPass);
+        console.log('[DB] Default HOI created (hoi@school.com / hoi123).');
+    }
+
+    // 3. Seed Exam Officer
+    const examOfficer = db.prepare('SELECT * FROM users WHERE email = ?').get('exam@school.com');
+    if (!examOfficer) {
+        const hashedPass = bcrypt.hashSync('exam123', 10);
+        const insert = db.prepare('INSERT INTO users (id, email, name, role, passwordHash) VALUES (?, ?, ?, ?, ?)');
+        insert.run('u3', 'exam@school.com', 'Exam Officer', 'exam_officer', hashedPass);
+        console.log('[DB] Default Exam Officer created (exam@school.com / exam123).');
     }
 
     // Seed Learning Areas
@@ -154,18 +172,7 @@ const seedDatabase = () => {
     const settings = db.prepare('SELECT * FROM settings WHERE id = 1').get();
     if (!settings) {
         const insert = db.prepare(`INSERT INTO settings (id, schoolName, motto, email, phone, schoolCode, academicYear, currentTerm, level, category, address) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-        insert.run(
-            "Tande Primary & JSS", 
-            "Excellence in Learning",
-            "info@tande.ac.ke",
-            "0712345678",
-            "123456",
-            "2024",
-            "Term 1",
-            "Primary & JSS",
-            "Public",
-            "P.O. Box 123, Nairobi"
-        );
+        insert.run("Tande Primary & JSS", "Excellence in Learning", "info@tande.ac.ke", "0712345678", "123456", "2024", "Term 1", "Primary & JSS", "Public", "P.O. Box 123, Nairobi");
         console.log('[DB] Default Settings seeded.');
     }
 };
@@ -177,7 +184,7 @@ const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
 const loginLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 10 });
 
 app.use(helmet({
-    contentSecurityPolicy: false // Disabled for easier dev with json-server-like behavior
+    contentSecurityPolicy: false
 }));
 
 app.use(morgan('dev'));
@@ -237,20 +244,8 @@ app.post('/api/signup', (req, res) => {
 });
 
 // ==========================================================================
-//   RESTful RESOURCE ROUTES (SQLite Version)
+//   RESTful RESOURCE ROUTES
 // ==========================================================================
-
-// Helper to handle Bulk Replace (Delete All -> Insert All)
-const bulkReplace = (tableName, dataArray, insertStmt) => {
-    const deleteMany = db.prepare(`DELETE FROM ${tableName}`);
-    const insertMany = db.transaction((items) => {
-        deleteMany.run();
-        for (const item of items) {
-            insertStmt.run(...Object.values(item));
-        }
-    });
-    insertMany(dataArray);
-};
 
 // --- STUDENTS ---
 app.get('/students', authenticateToken, (req, res) => {
@@ -258,38 +253,20 @@ app.get('/students', authenticateToken, (req, res) => {
     res.json(students);
 });
 
-app.post('/students', authenticateToken, (req, res) => {
-    // 1. Define the exact column order from your SQL Schema
-    const studentColumns = [
-        'id', 'name', 'gender', 'dob', 'idNumber', 'phone', 
-        'grade', 'stream', 'reg', 'photo', 
-        'guardianName', 'guardianPhone', 'guardianRel', 
-        'upiNumber', 'prevSchool', 'entryLevel', 'yearCompleted', 'nemisNumber', 'disability'
-    ];
-
-    // 2. Helper to map the array of objects to an array of arrays in the correct order
-    const mapStudentData = (dataArray) => {
-        return dataArray.map(item => studentColumns.map(col => item[col]));
-    };
-
-    // 3. Create the prepared statement
-    const insert = db.prepare(`
-        INSERT INTO students (${studentColumns.join(', ')}) 
-        VALUES (${studentColumns.map(() => '?').join(', ')})
-    `);
+app.post('/students', authenticateToken, requireRole('hoi', 'admin'), (req, res) => {
+    const studentColumns = ['id', 'name', 'gender', 'dob', 'idNumber', 'phone', 'grade', 'stream', 'reg', 'photo', 'guardianName', 'guardianPhone', 'guardianRel', 'upiNumber', 'prevSchool', 'entryLevel', 'yearCompleted', 'nemisNumber', 'disability'];
+    const mapStudentData = (dataArray) => dataArray.map(item => studentColumns.map(col => item[col]));
+    const insert = db.prepare(`INSERT INTO students (${studentColumns.join(', ')}) VALUES (${studentColumns.map(() => '?').join(', ')})`);
 
     try {
         const deleteMany = db.prepare(`DELETE FROM students`);
-        
         const insertMany = db.transaction((items) => {
             deleteMany.run();
-            // Use the mapped data instead of Object.values
             const rowsToInsert = mapStudentData(items);
             for (const row of rowsToInsert) {
                 insert.run(...row);
             }
         });
-        
         insertMany(req.body);
         res.json(req.body);
     } catch (err) {
@@ -304,36 +281,20 @@ app.get('/staff', authenticateToken, (req, res) => {
     res.json(staff);
 });
 
-app.post('/staff', authenticateToken, (req, res) => {
-    // 1. Define the exact column order from your SQL Schema
-    const staffColumns = [
-        'id', 'name', 'email', 'role', 'department', 'phone', 
-        'tscNumber', 'photo', 'subjects'
-    ];
-
-    // 2. Helper to map the array of objects
-    const mapStaffData = (dataArray) => {
-        return dataArray.map(item => staffColumns.map(col => item[col]));
-    };
-
-    // 3. Create the prepared statement
-    const insert = db.prepare(`
-        INSERT INTO staff (${staffColumns.join(', ')}) 
-        VALUES (${staffColumns.map(() => '?').join(', ')})
-    `);
+app.post('/staff', authenticateToken, requireRole('hoi', 'admin'), (req, res) => {
+    const staffColumns = ['id', 'name', 'email', 'role', 'department', 'phone', 'tscNumber', 'photo', 'subjects'];
+    const mapStaffData = (dataArray) => dataArray.map(item => staffColumns.map(col => item[col]));
+    const insert = db.prepare(`INSERT INTO staff (${staffColumns.join(', ')}) VALUES (${staffColumns.map(() => '?').join(', ')})`);
 
     try {
         const deleteMany = db.prepare(`DELETE FROM staff`);
-        
         const insertMany = db.transaction((items) => {
             deleteMany.run();
-            // Use the mapped data
             const rowsToInsert = mapStaffData(items);
             for (const row of rowsToInsert) {
                 insert.run(...row);
             }
         });
-        
         insertMany(req.body);
         res.json(req.body);
     } catch (err) {
@@ -348,24 +309,13 @@ app.get('/exams', authenticateToken, (req, res) => {
     res.json(exams);
 });
 
-app.post('/exams', authenticateToken, (req, res) => {
-    // 1. Define columns explicitly
+app.post('/exams', authenticateToken, requireRole('exam_officer', 'hoi', 'admin'), (req, res) => {
     const examColumns = ['id', 'studentId', 'subjectId', 'score', 'term', 'year', 'comments'];
-
-    // 2. Map data explicitly to ensure order and exclude extra fields
-    const mapExamData = (dataArray) => {
-        return dataArray.map(item => examColumns.map(col => item[col]));
-    };
-
-    // 3. Create prepared statement
-    const insert = db.prepare(`
-        INSERT INTO exams (${examColumns.join(', ')}) 
-        VALUES (${examColumns.map(() => '?').join(', ')})
-    `);
+    const mapExamData = (dataArray) => dataArray.map(item => examColumns.map(col => item[col]));
+    const insert = db.prepare(`INSERT INTO exams (${examColumns.join(', ')}) VALUES (${examColumns.map(() => '?').join(', ')})`);
 
     try {
         const deleteMany = db.prepare(`DELETE FROM exams`);
-        
         const insertMany = db.transaction((items) => {
             deleteMany.run();
             const rowsToInsert = mapExamData(items);
@@ -373,7 +323,6 @@ app.post('/exams', authenticateToken, (req, res) => {
                 insert.run(...row);
             }
         });
-        
         insertMany(req.body);
         res.json(req.body);
     } catch (err) {
@@ -385,15 +334,13 @@ app.post('/exams', authenticateToken, (req, res) => {
 // --- SETTINGS ---
 app.get('/settings', authenticateToken, (req, res) => {
     let settings = db.prepare('SELECT * FROM settings WHERE id = 1').get();
-    if (!settings) settings = { id: 1 }; // Fallback
+    if (!settings) settings = { id: 1 };
     res.json(settings);
 });
 
 app.post('/settings', authenticateToken, requireRole('admin'), (req, res) => {
     const data = req.body;
     data.id = 1;
-    
-    // FIX: Added the missing two placeholders '?' at the end (for stamp and ctSignature)
     const upsert = db.prepare(`
         INSERT INTO settings (id, schoolName, motto, email, phone, schoolCode, academicYear, currentTerm, level, category, address, hoiName, hoiTitle, hoiTsc, hoiPhone, hoiEmail, logo, stamp, hoiSignature, ctSignature) 
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -407,7 +354,6 @@ app.post('/settings', authenticateToken, requireRole('admin'), (req, res) => {
     `);
 
     try {
-        // Ensure the arguments passed here match the new order
         upsert.run(
             data.id, data.schoolName, data.motto, data.email, data.phone, data.schoolCode, 
             data.academicYear, data.currentTerm, data.level, data.category, data.address, 
@@ -424,31 +370,20 @@ app.post('/settings', authenticateToken, requireRole('admin'), (req, res) => {
 // --- LEARNING AREAS ---
 app.get('/learningAreas', authenticateToken, (req, res) => {
     const areas = db.prepare('SELECT * FROM learningAreas').all();
-    // Convert JSON string back to Array
     res.json(areas.map(a => ({ ...a, applicableLevels: JSON.parse(a.applicableLevels) })));
 });
 
 app.post('/learningAreas', authenticateToken, (req, res) => {
-    // 1. Define columns explicitly
     const laColumns = ['id', 'name', 'code', 'applicableLevels'];
-
-    // 2. Map data explicitly (and handle JSON stringification here)
     const mapLAData = (dataArray) => {
         return dataArray.map(item => {
-            // Ensure we stringify the array for storage, others remain as is
             return laColumns.map(col => col === 'applicableLevels' ? JSON.stringify(item[col]) : item[col]);
         });
     };
-
-    // 3. Create prepared statement
-    const insert = db.prepare(`
-        INSERT INTO learningAreas (${laColumns.join(', ')}) 
-        VALUES (${laColumns.map(() => '?').join(', ')})
-    `);
+    const insert = db.prepare(`INSERT INTO learningAreas (${laColumns.join(', ')}) VALUES (${laColumns.map(() => '?').join(', ')})`);
 
     try {
         const deleteMany = db.prepare(`DELETE FROM learningAreas`);
-        
         const insertMany = db.transaction((items) => {
             deleteMany.run();
             const rowsToInsert = mapLAData(items);
@@ -456,7 +391,6 @@ app.post('/learningAreas', authenticateToken, (req, res) => {
                 insert.run(...row);
             }
         });
-        
         insertMany(req.body);
         res.json(req.body);
     } catch (err) {
@@ -466,11 +400,11 @@ app.post('/learningAreas', authenticateToken, (req, res) => {
 });
 
 // ==========================================================================
-//   LEGACY / BACKUP ROUTES
+//   BACKUP / RESTORE ROUTES
 // ==========================================================================
 
-// API: Get Full DB (Legacy - for reference if needed)
-app.get('/api/db', authenticateToken, (req, res) => {
+// SECURE: Only Admin and HOI can download the full database
+app.get('/api/db', authenticateToken, requireRole('admin', 'hoi'), (req, res) => {
     try {
         const data = {
             students: db.prepare('SELECT * FROM students').all(),
@@ -478,37 +412,30 @@ app.get('/api/db', authenticateToken, (req, res) => {
             exams: db.prepare('SELECT * FROM exams').all(),
             settings: db.prepare('SELECT * FROM settings WHERE id=1').get() || {},
             learningAreas: db.prepare('SELECT * FROM learningAreas').all().map(a => ({ ...a, applicableLevels: JSON.parse(a.applicableLevels) })),
-            users: db.prepare('SELECT id, email, role, name FROM users').all()
         };
         res.json(data);
     } catch (err) {
-        res.status(500).json({ error: 'Failed to load database' });
+        res.status(500).json({ error: 'Failed to generate backup' });
     }
 });
 
-// --- RESTORE / IMPORT ROUTE ---
 app.post('/api/restore', authenticateToken, requireRole('admin'), (req, res) => {
-    try {
+    const safeReplace = (table, data, columns) => {
+        if (!data || !Array.isArray(data)) return;
+        const insert = db.prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`);
+        const mappedData = data.map(item => columns.map(col => item[col] ?? '')); 
+        const transaction = db.transaction((items) => {
+            db.prepare(`DELETE FROM ${table}`).run();
+            for (const row of items) {
+                insert.run(...row);
+            }
+        });
+        transaction(mappedData);
+    };
+
+    const restoreTransaction = db.transaction(() => {
         const { students, staff, exams, settings, learningAreas } = req.body;
 
-        // Helper to safely run bulkReplace
-        const safeReplace = (table, data, columns) => {
-            if (!data || !Array.isArray(data)) return;
-            const insert = db.prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`);
-            
-            // Map data strictly to columns to prevent errors
-            const mappedData = data.map(item => columns.map(col => item[col]));
-            
-            const transaction = db.transaction((items) => {
-                db.prepare(`DELETE FROM ${table}`).run();
-                for (const row of items) {
-                    insert.run(...row);
-                }
-            });
-            transaction(mappedData);
-        };
-
-        // 1. Restore Learning Areas (Independent)
         if (learningAreas) {
             const laCols = ['id', 'name', 'code', 'applicableLevels'];
             const mappedLA = learningAreas.map(item => ({
@@ -518,37 +445,37 @@ app.post('/api/restore', authenticateToken, requireRole('admin'), (req, res) => 
             safeReplace('learningAreas', mappedLA, laCols);
         }
 
-        // 2. Restore Settings (Single Object expected in backup, convert to Array)
         if (settings) {
-            const insert = db.prepare(`INSERT INTO settings (id, schoolName, motto, email, phone, schoolCode, academicYear, currentTerm, level, category, address, hoiName, hoiTitle, hoiTsc, hoiPhone, hoiEmail, logo, stamp, hoiSignature, ctSignature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
             const settingsCols = ['id', 'schoolName', 'motto', 'email', 'phone', 'schoolCode', 'academicYear', 'currentTerm', 'level', 'category', 'address', 'hoiName', 'hoiTitle', 'hoiTsc', 'hoiPhone', 'hoiEmail', 'logo', 'stamp', 'hoiSignature', 'ctSignature'];
-            // Ensure ID is 1
             const s = { ...settings, id: 1 }; 
-            const row = settingsCols.map(col => s[col]);
-            
+            const insert = db.prepare(`INSERT INTO settings (${settingsCols.join(', ')}) VALUES (${settingsCols.map(() => '?').join(', ')}) ON CONFLICT(id) DO UPDATE SET ${settingsCols.slice(1).map(col => `${col}=excluded.${col}`).join(', ')}`);
+            const row = settingsCols.map(col => s[col] ?? '');
             db.prepare(`DELETE FROM settings`).run();
             insert.run(...row);
         }
 
-        // 3. Restore Students
         const studentCols = ['id', 'name', 'gender', 'dob', 'idNumber', 'phone', 'grade', 'stream', 'reg', 'photo', 'guardianName', 'guardianPhone', 'guardianRel', 'upiNumber', 'prevSchool', 'entryLevel', 'yearCompleted', 'nemisNumber', 'disability'];
         safeReplace('students', students, studentCols);
 
-        // 4. Restore Staff
         const staffCols = ['id', 'name', 'email', 'role', 'department', 'phone', 'tscNumber', 'photo', 'subjects'];
         safeReplace('staff', staff, staffCols);
 
-        // 5. Restore Exams (Do this last as it depends on students)
         const examCols = ['id', 'studentId', 'subjectId', 'score', 'term', 'year', 'comments'];
         safeReplace('exams', exams, examCols);
+    });
 
+    try {
+        restoreTransaction();
         res.json({ success: true, message: 'Database restored successfully!' });
-
     } catch (err) {
         console.error("Restore Error:", err);
-        res.status(500).json({ error: 'Restore failed', details: err.message });
+        res.status(500).json({ error: 'Restore failed. No changes were made.', details: err.message });
     }
 });
+
+// ==========================================================================
+//   AI CHAT ROUTE
+// ==========================================================================
 app.post('/api/ai/chat', authenticateToken, async (req, res) => {
     const { query, context } = req.body;
     if (!OPENAI_API_KEY) return res.status(500).json({ error: 'AI Service Unconfigured' });
@@ -572,10 +499,31 @@ app.post('/api/ai/chat', authenticateToken, async (req, res) => {
     }
 });
 
+// ==========================================================================
+//   EMERGENCY RESET ROUTE
+// ==========================================================================
+app.get('/api/reset-admin', (req, res) => {
+    try {
+        console.log("[EMERGENCY] Resetting Admin user...");
+        const hashedPass = bcrypt.hashSync('admin123', 10);
+        const stmt = db.prepare(`
+            INSERT OR REPLACE INTO users (id, email, name, role, passwordHash) 
+            VALUES (?, ?, ?, ?, ?)
+        `);
+        stmt.run('u1', 'admin@school.com', 'System Admin', 'admin', hashedPass);
+        res.json({ 
+            success: true, 
+            message: 'Admin user has been reset.', 
+            note: 'Login with admin@school.com / admin123' 
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // --- Start Server ---
 app.listen(PORT, () => {
-    console.log(`[OK] SQLite Server running at http://localhost:${PORT}`);
-    console.log(`[INFO] Database File: school.db`);
+    console.log(`[OK] Server running at http://localhost:${PORT}`);
     console.log(`[INFO] Default Admin: admin@school.com / admin123`);
-
 });
