@@ -293,11 +293,13 @@ async function loadData() {
         
         store.settings = { ...store.settings, ...(serverData.settings || {}), ...(localData?.settings || {}) };
 
+                // Learning Areas: merge
         let existingAreas = serverData.learningAreas || [];
         DEFAULT_LEARNING_AREAS.forEach(def => {
             if (!existingAreas.some(area => area.code === def.code)) existingAreas.push(def);
         });
-                // FIX: Force applicableLevels to be real arrays, not strings
+        
+        // FIX: Force applicableLevels to be real arrays, not strings (prevents mobile crash)
         store.learningAreas = existingAreas.map(area => ({
             ...area,
             applicableLevels: Array.isArray(area.applicableLevels) 
