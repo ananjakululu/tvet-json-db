@@ -9509,7 +9509,7 @@ function router(viewId, navEl) {
         case 'dashboard': renderDashboard(); break; 
         case 'students': initStudentSection(); break; 
         case 'staff': initStaffSection(); break; 
-        case 'exams': resetExamView(); if (typeof initExamSystemDashboard === 'function') setTimeout(initExamSystemDashboard, 80); break; 
+        case 'exams': setTimeout(() => { resetExamView(); if (typeof initExamSystemDashboard === 'function') initExamSystemDashboard(); }, 50); break; 
         case 'intake': resetIntakeForm(); break; 
         case 'settings': updateSettingsForm(); renderCourseSettings(); break; 
         case 'curricula': renderCurricula(); break;
