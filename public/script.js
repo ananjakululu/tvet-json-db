@@ -244,8 +244,17 @@ async function loadData() {
     });
 
     if (result.ok && result.data) {
-        const serverData = result.data;
+                const serverData = result.data;
         
+        // CRITICAL FIX: Strip heavy photos from server data to prevent phone crash
+        if (serverData.students) serverData.students = serverData.students.map(s => ({ ...s, photo: null }));
+        if (serverData.staff) serverData.staff = serverData.staff.map(s => ({ ...s, photo: null }));
+        if (serverData.settings) {
+            serverData.settings.logo = null;
+            serverData.settings.stamp = null;
+            serverData.settings.hoiSignature = null;
+            serverData.settings.ctSignature = null;
+        }
         const localRaw = localStorage.getItem('elimutrack_backup');
         let localData = null;
         if (localRaw) {
