@@ -6614,7 +6614,7 @@ function renderExamTimetableCard(exam) {
     const statusClass = status.replace(/\s+/g, '-');
     const startTime = exam.startTime || '08:00';
     const endTime = computeExamEndTime(startTime, exam.duration || 60);
-    const subjects = (exam.subjects || []).map(s => s.name).join(', ');
+    const subjects = ((Array.isArray(exam.subjects) ? exam.subjects : (typeof exam.subjects === 'string' ? JSON.parse(exam.subjects || '[]') : [])).map(
     const invigilator = exam.invigilatorId ? StaffRepo.getById(exam.invigilatorId) : null;
     const invigName = invigilator ? invigilator.name : 'Unassigned';
     const asstInvig = exam.assistantInvigilatorId ? StaffRepo.getById(exam.assistantInvigilatorId) : null;
@@ -7294,7 +7294,7 @@ function renderExamListGrid() {
 
     container.innerHTML = filtered.map(exam => {
         const status = exam.status || 'Scheduled';
-        const subjects = (exam.subjects || []).map(s => s.name || s);
+        const subjects = ((Array.isArray(exam.subjects) ? exam.subjects : (typeof exam.subjects === 'string' ? JSON.parse(exam.subjects || '[]') : [])).map(
         const grade = exam.grade || '—';
         const dateStr = exam.date ? new Date(exam.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
         const term = exam.term || '—';
@@ -7401,7 +7401,7 @@ function openExamFormModal(examId) {
             if ($('examPublishDate')) $('examPublishDate').value = exam.resultsPublishDate || '';
             $('examNotes').value = exam.notes || '';
             // Mark selected subjects
-            const selectedCodes = (exam.subjects || []).map(s => s.code);
+            const selectedCodes = ((Array.isArray(exam.subjects) ? exam.subjects : (typeof exam.subjects === 'string' ? JSON.parse(exam.subjects || '[]') : [])).map(
             document.querySelectorAll('input[name="examSubject"]').forEach(cb => {
                 if (selectedCodes.includes(cb.value)) cb.checked = true;
             });
