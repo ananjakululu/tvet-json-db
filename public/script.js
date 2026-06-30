@@ -6614,12 +6614,15 @@ function renderExamTimetableCard(exam) {
     const statusClass = status.replace(/\s+/g, '-');
     const startTime = exam.startTime || '08:00';
     const endTime = computeExamEndTime(startTime, exam.duration || 60);
-    const subjects = ((Array.isArray(exam.subjects) ? exam.subjects : (typeof exam.subjects === 'string' ? JSON.parse(exam.subjects || '[]') : [])).map(
-    const invigilator = exam.invigilatorId ? StaffRepo.getById(exam.invigilatorId) : null;
-    const invigName = invigilator ? invigilator.name : 'Unassigned';
-    const asstInvig = exam.assistantInvigilatorId ? StaffRepo.getById(exam.assistantInvigilatorId) : null;
-
-    const sessionIcon = exam.session === 'Morning' ? 'fa-sun' : (exam.session === 'Afternoon' ? 'fa-cloud-sun' : 'fa-moon');
+    
+    const subjects = safeArray(exam.subjects).map(sub => {
+        const invigilator = exam.invigilatorId ? StaffById(exam.invigilatorId) : null;
+        const invigName = invigilator ? invigilator.name : 'Unassigned';
+        const asstInvig = exam.assistantInvigilatorId ? StaffRepo.getById(exam.assistantInvigilatorId) : null;
+        const sessionIcon = exam.session === 'Morning' ? 'fa-sun' : (exam.session === 'Afternoon' ? 'fa-cloud-sun' : 'fa-moon');
+        
+        return `<span class="ett-subject-tag">${escapeHtml(sub)}</span>`;
+    }).join(' ');
 
     return `
         <div class="exam-tt-card" data-status="${escapeHtml(status)}" onclick="openExamGradingModal('${exam.id}')">
@@ -6638,17 +6641,15 @@ function renderExamTimetableCard(exam) {
                     <span><i class="fa-solid fa-location-dot"></i> ${escapeHtml(exam.venue || 'TBD')}</span>
                     <span><i class="fa-solid fa-clock"></i> ${exam.duration || 60} min</span>
                 </div>
-                <div class="ett-subjects">${escapeHtml(subjects || 'No subjects')}</div>
+                <div class="ett-subjects">${subjects || 'No subjects'}</div>
                 <div class="ett-invigilator">
                     <i class="fa-solid fa-user-shield"></i>
-                    <strong>${escapeHtml(invigName)}</strong>
-                    ${asstInvig ? `<span style="color:var(--text-muted);">· Asst: ${escapeHtml(asstInvig.name)}</span>` : ''}
+                    <strong>Unassigned</strong>
                 </div>
             </div>
         </div>
     `;
 }
-
 function computeExamEndTime(startTime, durationMinutes) {
     if (!startTime) return '';
     const [h, m] = startTime.split(':').map(Number);
@@ -7294,7 +7295,7 @@ function renderExamListGrid() {
 
     container.innerHTML = filtered.map(exam => {
         const status = exam.status || 'Scheduled';
-        const subjects = ((Array.isArray(exam.subjects) ? exam.subjects : (typeof exam.subjects === 'string' ? JSON.parse(exam.subjects || '[]') : [])).map(
+        const subjects = safeArray(exam.subjects);
         const grade = exam.grade || '—';
         const dateStr = exam.date ? new Date(exam.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—';
         const term = exam.term || '—';
@@ -7304,7 +7305,7 @@ function renderExamListGrid() {
         // Grading progress — use countGradedSubjects for accurate per-subject progress
         const results = exam.results || [];
         const gradedCount = results.filter(r => countGradedSubjects(r, exam) > 0).length;
-        const fullyGradedCount = results.filter(r => countGradedSubjects(r, exam) === (exam.subjects || []).length).length;
+        const fullyGradedCount = results.filter(r => countGradedSubjects(r, exam) === subjects.length).length;
         const totalStudents = results.length;
         const progressPct = totalStudents > 0 ? Math.round(fullyGradedCount / totalStudents * 100) : 0;
 
@@ -7320,7 +7321,7 @@ function renderExamListGrid() {
                     <span><i class="fa-solid fa-graduation-cap"></i> ${escapeHtml(grade)}</span>
                     <span><i class="fa-solid fa-calendar"></i> ${dateStr}</span>
                     <span><i class="fa-solid fa-clock"></i> ${duration} min</span>
-                    <span><i class="fa-solid fa-book"></i> ${type}</span>
+                    <span><i class="fa-solid fa-book"></i> ${escapeHtml(type)}</span>
                     <span><i class="fa-solid fa-folder"></i> ${escapeHtml(term)}</span>
                 </div>
                 <div class="exam-card-subjects">
@@ -7395,13 +7396,13 @@ function openExamFormModal(examId) {
             if ($('examInvigilator')) $('examInvigilator').value = exam.invigilatorId || '';
             if ($('examAssistantInvigilator')) $('examAssistantInvigilator').value = exam.assistantInvigilatorId || '';
             if ($('examSeatingCapacity')) $('examSeatingCapacity').value = exam.seatingCapacity || '';
-            // Deadlines
             if ($('examRegDeadline')) $('examRegDeadline').value = exam.registrationDeadline || '';
             if ($('examScoreDeadline')) $('examScoreDeadline').value = exam.scoreSubmissionDeadline || '';
             if ($('examPublishDate')) $('examPublishDate').value = exam.resultsPublishDate || '';
             $('examNotes').value = exam.notes || '';
-            // Mark selected subjects
-            const selectedCodes = ((Array.isArray(exam.subjects) ? exam.subjects : (typeof exam.subjects === 'string' ? JSON.parse(exam.subjects || '[]') : [])).map(
+            
+            // FIX: Safely parse subjects and check checkboxes separately
+            const selectedCodes = safeArray(exam.subjects);
             document.querySelectorAll('input[name="examSubject"]').forEach(cb => {
                 if (selectedCodes.includes(cb.value)) cb.checked = true;
             });
